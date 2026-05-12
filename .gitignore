@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Datasets, checkpoints, training outputs (too large for git).
+# Sample visualizations are kept under docs/figures/.
+data/
+checkpoints/
+output/

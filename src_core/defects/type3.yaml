@@ -1,0 +1,42 @@
+n_samples: 1000
+psf_size: 256
+crop_size: 32
+
+# Annular aperture
+outer_r: [30, 32]
+epsilon: [0.9, 0.92]
+ellipticity: [0.15, 0.15]
+ellip_angle: [0, 0]
+
+# Pupil obstructions (optional — all default to 0 when omitted)
+# Units are fractions of outer_r.
+square_eps: [0, 0]        # central square obstruction
+h_stripe_w: [0, 0]        # horizontal stripe (masks rows near center)
+v_stripe_w: [0, 0]        # vertical stripe (masks columns near center)
+h_outer_crop: [0, 0]      # crop top/bottom (keeps central horizontal band)
+v_outer_crop: [0, 0]      # crop left/right (keeps central vertical band)
+
+# Aberrations (Zernike)
+defocus: [0, 0]
+astig_x: [0, 0]
+astig_y: [0, 0]
+coma_x: [0, 0]
+coma_y: [0, 0]
+spherical: [0, 0]
+trefoil_x: [0, 0]
+trefoil_y: [0, 0]
+
+# Defect intensity magnitude (sign is randomly +/-).
+# Forms: scalar, [a, b], or [[a1,b1], [a2,b2], ...] (equal-prob mixture)
+intensity_abs: [60, 80]
+
+# Noise
+brightness: [1500, 3000]
+background: [5, 5]
+poisson_noise: true
+gaussian_sigma: [1.5, 1.5]
+
+# Cleaning (connected peak)
+threshold_multiplier: 1.0
+
+output_dir: output
