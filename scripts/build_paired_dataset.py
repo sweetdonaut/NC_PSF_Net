@@ -48,8 +48,8 @@ def synth_pair(gray, rng,
     sigma_proc = float(rng.uniform(*sigma_proc_range))
 
     def add_die_noise(base):
+        # 2 dies per station: target (T) + 1 reference (R)
         return np.stack([
-            base + rng.normal(0, sigma_die, base.shape).astype(np.float32),
             base + rng.normal(0, sigma_die, base.shape).astype(np.float32),
             base + rng.normal(0, sigma_die, base.shape).astype(np.float32),
         ], axis=0)

@@ -10,7 +10,7 @@ import tifffile
 import torch
 import torch.nn.functional as F
 
-from dataloader import calculate_positions, ensure_3ch, ensure_hwc
+from dataloader import calculate_positions, ensure_2ch, ensure_hwc
 from model import SegmentationNetwork
 
 
@@ -41,7 +41,7 @@ def _load_image(path, img_format):
         img = tifffile.imread(path)
     else:
         img = cv2.imread(path)
-    img = ensure_3ch(ensure_hwc(img)).astype(np.float32)
+    img = ensure_2ch(ensure_hwc(img)).astype(np.float32)
     img_min, img_max = img.min(), img.max()
     if img_min < 0 or img_max > 255:
         if img_max > img_min:
@@ -74,11 +74,11 @@ def sliding_window_inference(prev_image, next_image, model, patch_size, device):
         for x_idx, x in enumerate(x_positions):
             prev_patch = prev_image[y:y + patch_h, x:x + patch_w]
             next_patch = next_image[y:y + patch_h, x:x + patch_w]
-            six = np.stack([
-                prev_patch[:, :, 0], prev_patch[:, :, 1], prev_patch[:, :, 2],
-                next_patch[:, :, 0], next_patch[:, :, 1], next_patch[:, :, 2],
+            four = np.stack([
+                prev_patch[:, :, 0], prev_patch[:, :, 1],
+                next_patch[:, :, 0], next_patch[:, :, 1],
             ], axis=0)
-            tensor = torch.from_numpy(six).float() / 255.0
+            tensor = torch.from_numpy(four).float() / 255.0
             tensor = tensor.unsqueeze(0).to(device)
 
             with torch.no_grad():
@@ -122,25 +122,23 @@ def sliding_window_inference(prev_image, next_image, model, patch_size, device):
 
 
 def visualize_results(prev_image, next_image, heatmap, output_path):
-    fig = plt.figure(figsize=(14, 6), dpi=200)
-    gs = gridspec.GridSpec(2, 4, figure=fig)
+    fig = plt.figure(figsize=(12, 6), dpi=200)
+    gs = gridspec.GridSpec(2, 3, figure=fig)
 
     labels = [
         ("prev_T", prev_image[:, :, 0]),
-        ("prev_R1", prev_image[:, :, 1]),
-        ("prev_R2", prev_image[:, :, 2]),
+        ("prev_R", prev_image[:, :, 1]),
         ("next_T", next_image[:, :, 0]),
-        ("next_R1", next_image[:, :, 1]),
-        ("next_R2", next_image[:, :, 2]),
+        ("next_R", next_image[:, :, 1]),
     ]
-    positions = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+    positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
     for (label, img), (r, c) in zip(labels, positions):
         ax = fig.add_subplot(gs[r, c])
         ax.imshow(img, cmap="gray", vmin=0, vmax=255)
         ax.set_title(label, fontsize=10)
         ax.axis("off")
 
-    ax_hm = fig.add_subplot(gs[:, 3])
+    ax_hm = fig.add_subplot(gs[:, 2])
     h_min, h_max = heatmap.min(), heatmap.max()
     if h_max - h_min < 1e-8:
         h_min, h_max = 0, 1
@@ -169,7 +167,7 @@ def inference(args):
     patch_size = (checkpoint["img_height"], checkpoint["img_width"])
     print(f"Model patch size: {patch_size}")
 
-    model = SegmentationNetwork(in_channels=6, out_channels=2)
+    model = SegmentationNetwork(in_channels=4, out_channels=2)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()

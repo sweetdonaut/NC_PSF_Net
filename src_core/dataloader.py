@@ -17,26 +17,29 @@ from functools import lru_cache
 from tqdm import tqdm
 
 
-# 14 defect cases for paired prev/next die-to-die training.
-# pattern = (T, R1, R2) boolean triple; is_gt=True only for B1.
+# 9 defect cases for paired prev/next die-to-die training (2 channels/station).
+# Key format "<prev>→<next>" where each pattern is 2 bits (T, R).
+# Value: (prev_pattern, next_pattern, is_gt). is_gt=True only for the two
+# positive-sample cases that satisfy next_T=1 AND next_R=0 AND prev_T=0.
 CASES = {
-    "A1": ((1, 0, 0), (1, 0, 0), False),
-    "A2": ((0, 1, 0), (0, 1, 0), False),
-    "A3": ((0, 0, 1), (0, 0, 1), False),
-    "A4": ((1, 1, 0), (1, 1, 0), False),
-    "A5": ((1, 0, 1), (1, 0, 1), False),
-    "A6": ((0, 1, 1), (0, 1, 1), False),
-    "A7": ((1, 1, 1), (1, 1, 1), False),
-    "B1": ((0, 0, 0), (1, 0, 0), True),
-    "B2": ((0, 0, 0), (0, 1, 0), False),
-    "B3": ((0, 0, 0), (0, 0, 1), False),
-    "B4": ((0, 0, 0), (1, 1, 0), False),
-    "B5": ((0, 0, 0), (1, 0, 1), False),
-    "B6": ((0, 0, 0), (0, 1, 1), False),
-    "B7": ((0, 0, 0), (1, 1, 1), False),
+    "10→10": ((1, 0), (1, 0), False),  # prev T-only passthrough
+    "01→01": ((0, 1), (0, 1), False),  # prev R-only passthrough
+    "11→11": ((1, 1), (1, 1), False),  # prev T+R passthrough
+    "00→10": ((0, 0), (1, 0), True),   # next-station-new T-only (the target!)
+    "01→10": ((0, 1), (1, 0), True),   # next-station-new T-only with prev_R distractor
+    "00→01": ((0, 0), (0, 1), False),  # next-station-new R-only
+    "00→11": ((0, 0), (1, 1), False),  # next-station-new T+R
+    "11→10": ((1, 1), (1, 0), False),  # process selectively removed R from prev T+R
+    "11→01": ((1, 1), (0, 1), False),  # process selectively removed T from prev T+R
 }
 CASE_NAMES = list(CASES.keys())
-CHANNEL_ORDER = ["prev_T", "prev_R1", "prev_R2", "next_T", "next_R1", "next_R2"]
+CHANNEL_ORDER = ["prev_T", "prev_R", "next_T", "next_R"]
+
+# The four "next-station T-only family" anchors. Each patch is forced to
+# contain at least one of each, because the four are visually identical in
+# the next station (all T-only) but differ in GT and in prev_T, forcing the
+# model to learn "look at prev_T, ignore prev_R".
+ANCHORS = ["00→10", "01→10", "10→10", "11→10"]
 
 
 def parse_s3_path(s3_path):
@@ -63,14 +66,19 @@ def list_s3_objects(bucket, prefix, img_format):
 
 
 def ensure_hwc(image):
-    if len(image.shape) == 3 and image.shape[0] in (3, 4) and image.shape[1] > 4 and image.shape[2] > 4:
+    """Convert CHW to HWC if shape signals it. Accepts 2/3/4 leading-dim CHW."""
+    if (len(image.shape) == 3
+            and image.shape[0] in (2, 3, 4)
+            and image.shape[1] > 4
+            and image.shape[2] > 4):
         return np.transpose(image, (1, 2, 0))
     return image
 
 
-def ensure_3ch(image):
-    if len(image.shape) == 3 and image.shape[2] == 4:
-        return image[:, :, :3]
+def ensure_2ch(image):
+    """Keep only first 2 channels (drop extras if present)."""
+    if len(image.shape) == 3 and image.shape[2] > 2:
+        return image[:, :, :2]
     return image
 
 
@@ -246,14 +254,15 @@ def _pair_paths(prev_paths, next_paths):
 class PairedDataset(TorchDataset):
     """Paired prev/next station dataset for die-to-die anomaly training.
 
-    Each image is 3-channel grayscale (target, ref1, ref2). The model input
-    concatenates both stations into 6 channels. GT mask labels only B1
-    (next-station-new target-only) defects.
+    Each image is 2-channel grayscale (target, ref). The model input
+    concatenates both stations into 4 channels. GT mask labels the two
+    positive-sample cases 00→10 and 01→10 (both satisfy next_T=1 AND
+    next_R=0 AND prev_T=0).
     """
 
     def __init__(self, prev_path, next_path,
                  patch_size=(128, 128),
-                 num_defects_range=(3, 8),
+                 num_defects_range=(4, 10),
                  img_format="tiff",
                  cache_size=0,
                  defect_mode="gaussian",
@@ -280,9 +289,10 @@ class PairedDataset(TorchDataset):
         else:
             print("Defect mode: Gaussian")
 
-        if num_defects_range[0] < 2:
-            print(f"Warning: num_defects_range minimum is {num_defects_range[0]} (<2). "
-                  "A1+B1 forcing degrades when N<2.")
+        if num_defects_range[0] < len(ANCHORS):
+            print(f"Warning: num_defects_range minimum {num_defects_range[0]} < "
+                  f"{len(ANCHORS)} anchors. The forced four-anchor mechanism "
+                  "will degrade when N < 4.")
 
         self.prev_is_s3 = prev_path.startswith("s3://")
         self.next_is_s3 = next_path.startswith("s3://")
@@ -342,14 +352,18 @@ class PairedDataset(TorchDataset):
         print("Dataset Image Information")
         print("=" * 60)
         prev_path, next_path = self.training_paths[0]
-        prev_img = ensure_3ch(ensure_hwc(self._load_image(prev_path)))
-        next_img = ensure_3ch(ensure_hwc(self._load_image(next_path)))
+        prev_img = ensure_2ch(ensure_hwc(self._load_image(prev_path)))
+        next_img = ensure_2ch(ensure_hwc(self._load_image(next_path)))
         if prev_img is None or next_img is None:
             raise ValueError(f"Failed to load sample pair: {prev_path} / {next_path}")
         if prev_img.shape != next_img.shape:
             raise ValueError(
                 f"Prev/next size mismatch: prev {prev_img.shape} vs next {next_img.shape}. "
                 "MVP assumes pixel-aligned prev/next pairs.")
+        if prev_img.ndim != 3 or prev_img.shape[2] != 2:
+            raise ValueError(
+                f"Expected 2-channel images (H, W, 2), got {prev_img.shape}. "
+                "Hybrid pipeline requires 2 channels per station (target + 1 reference).")
         h, w = prev_img.shape[:2]
         self.detected_img_h = h
         self.detected_img_w = w
@@ -391,8 +405,8 @@ class PairedDataset(TorchDataset):
         if prev_image is None or next_image is None:
             raise ValueError(f"Failed to load pair: {prev_path} / {next_path}")
 
-        prev_image = ensure_3ch(ensure_hwc(prev_image)).astype(np.float32)
-        next_image = ensure_3ch(ensure_hwc(next_image)).astype(np.float32)
+        prev_image = ensure_2ch(ensure_hwc(prev_image)).astype(np.float32)
+        next_image = ensure_2ch(ensure_hwc(next_image)).astype(np.float32)
         prev_image = self._normalize_to_0_255(prev_image)
         next_image = self._normalize_to_0_255(next_image)
 
@@ -402,20 +416,18 @@ class PairedDataset(TorchDataset):
         next_patch = next_image[start_y:end_y, start_x:end_x]
 
         channels = {
-            "prev_T":  prev_patch[:, :, 0].copy(),
-            "prev_R1": prev_patch[:, :, 1].copy(),
-            "prev_R2": prev_patch[:, :, 2].copy(),
-            "next_T":  next_patch[:, :, 0].copy(),
-            "next_R1": next_patch[:, :, 1].copy(),
-            "next_R2": next_patch[:, :, 2].copy(),
+            "prev_T": prev_patch[:, :, 0].copy(),
+            "prev_R": prev_patch[:, :, 1].copy(),
+            "next_T": next_patch[:, :, 0].copy(),
+            "next_R": next_patch[:, :, 1].copy(),
         }
         channels, gt_mask = self.generate_paired_defects(channels)
 
-        six_channel = np.stack([channels[k] for k in CHANNEL_ORDER], axis=0)
-        six_channel_tensor = torch.from_numpy(six_channel).float() / 255.0
+        four_channel = np.stack([channels[k] for k in CHANNEL_ORDER], axis=0)
+        four_channel_tensor = torch.from_numpy(four_channel).float() / 255.0
         gt_mask_tensor = torch.from_numpy(gt_mask).float().unsqueeze(0)
         return {
-            "paired_input": six_channel_tensor,
+            "paired_input": four_channel_tensor,
             "target_mask": gt_mask_tensor,
         }
 
@@ -464,20 +476,22 @@ class PairedDataset(TorchDataset):
         return None, None, None
 
     def _assign_cases(self, n_defects):
-        """Force one A1 + one B1, fill rest uniformly across all 14 cases.
+        """Force the four 'next-station T-only family' anchors, fill rest uniformly.
 
-        A1 is the unique negative that forces cross-station comparison
-        (looks like target-only in next station, but prev has it too).
-        B1 is the unique positive sample.
+        The four anchors (00→10, 01→10, 10→10, 11→10) all look like T-only in
+        the next station but have different GT and different prev_T values.
+        Forcing all four into every patch prevents the model from learning a
+        "prev has anything → output 0" shortcut, which would systematically
+        misclassify 01→10 (prev_R has a defect but prev_T is clean → still 1).
         """
         if n_defects <= 0:
             return []
-        if n_defects == 1:
-            return ["B1"]
-        cases = ["A1", "B1"]
-        if n_defects > 2:
-            extra = np.random.choice(CASE_NAMES, size=n_defects - 2, replace=True).tolist()
-            cases.extend(extra)
+        if n_defects <= len(ANCHORS):
+            return list(ANCHORS[:n_defects])
+        cases = list(ANCHORS)
+        extra = np.random.choice(CASE_NAMES, size=n_defects - len(ANCHORS),
+                                 replace=True).tolist()
+        cases.extend(extra)
         np.random.shuffle(cases)
         return cases
 

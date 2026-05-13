@@ -189,7 +189,7 @@ def train_on_device(args):
     patch_size = (args.patch_size, args.patch_size)
     run_name = f"NCPSF_lr{args.lr}_ep{args.epochs}_bs{args.bs}_{patch_size[0]}x{patch_size[1]}"
 
-    model_seg = SegmentationNetwork(in_channels=6, out_channels=2)
+    model_seg = SegmentationNetwork(in_channels=4, out_channels=2)
     model_seg.to(device)
     model_seg.apply(weights_init)
 
@@ -308,8 +308,9 @@ def main():
                         help="GPU id (-1 for CPU)")
     parser.add_argument("--checkpoint_path", type=str, required=True)
     parser.add_argument("--patch_size", type=int, default=128)
-    parser.add_argument("--num_defects_range", type=int, nargs=2, default=[3, 8],
-                        help="[min, max] defects per patch when defects are added")
+    parser.add_argument("--num_defects_range", type=int, nargs=2, default=[4, 10],
+                        help="[min, max] defects per patch when defects are added. "
+                             "Min should be >= 4 to satisfy the four-anchor forcing.")
 
     parser.add_argument("--prev_path", type=str, required=True,
                         help="Directory of prev-station training images")

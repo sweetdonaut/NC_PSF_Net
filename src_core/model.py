@@ -128,9 +128,9 @@ class DecoderSegmentation(nn.Module):
 
 
 class SegmentationNetwork(nn.Module):
-    """6-channel input: prev_T, prev_R1, prev_R2, next_T, next_R1, next_R2."""
+    """4-channel input: prev_T, prev_R, next_T, next_R (2 dies per station)."""
 
-    def __init__(self, in_channels=6, out_channels=2, base_channels=64):
+    def __init__(self, in_channels=4, out_channels=2, base_channels=64):
         super().__init__()
         self.encoder = EncoderSegmentation(in_channels, base_channels)
         self.decoder = DecoderSegmentation(base_channels, out_channels=out_channels)

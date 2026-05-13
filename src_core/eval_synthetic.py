@@ -1,7 +1,7 @@
-"""Evaluate a trained model on test pairs with synthesized 14-case defects.
+"""Evaluate a trained model on test pairs with synthesized 9-case defects.
 
-For each test pair, runs the same 14-case synthesis the dataloader does, then
-visualizes: 6 input channels, GT mask, predicted heatmap, overlay diff.
+For each test pair, runs the same 9-case synthesis the dataloader does, then
+visualizes: 4 input channels, GT mask, predicted heatmap, overlay diff.
 """
 
 import argparse
@@ -20,7 +20,7 @@ from dataloader import (
     CHANNEL_ORDER,
     PairedDataset,
     calculate_positions,
-    ensure_3ch,
+    ensure_2ch,
     ensure_hwc,
 )
 from model import SegmentationNetwork
@@ -31,7 +31,7 @@ def _load_image(path, img_format):
         img = tifffile.imread(path)
     else:
         img = cv2.imread(path)
-    img = ensure_3ch(ensure_hwc(img)).astype(np.float32)
+    img = ensure_2ch(ensure_hwc(img)).astype(np.float32)
     img_min, img_max = img.min(), img.max()
     if img_min < 0 or img_max > 255:
         if img_max > img_min:
@@ -42,30 +42,28 @@ def _load_image(path, img_format):
 
 
 def visualize_eval(channels, gt_mask, heatmap, output_path):
-    fig = plt.figure(figsize=(16, 7), dpi=200)
-    gs = gridspec.GridSpec(2, 5, figure=fig, width_ratios=[1, 1, 1, 1, 1.2])
+    fig = plt.figure(figsize=(14, 7), dpi=200)
+    gs = gridspec.GridSpec(2, 4, figure=fig, width_ratios=[1, 1, 1, 1.2])
 
     panels = [
         ("prev_T", channels["prev_T"]),
-        ("prev_R1", channels["prev_R1"]),
-        ("prev_R2", channels["prev_R2"]),
+        ("prev_R", channels["prev_R"]),
         ("next_T", channels["next_T"]),
-        ("next_R1", channels["next_R1"]),
-        ("next_R2", channels["next_R2"]),
+        ("next_R", channels["next_R"]),
     ]
-    coords = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+    coords = [(0, 0), (0, 1), (1, 0), (1, 1)]
     for (label, img), (r, c) in zip(panels, coords):
         ax = fig.add_subplot(gs[r, c])
         ax.imshow(img, cmap="gray", vmin=0, vmax=255)
         ax.set_title(label, fontsize=9)
         ax.axis("off")
 
-    ax_gt = fig.add_subplot(gs[0, 3])
+    ax_gt = fig.add_subplot(gs[0, 2])
     ax_gt.imshow(gt_mask, cmap="hot", vmin=0, vmax=1)
-    ax_gt.set_title("GT (B1 only)", fontsize=9)
+    ax_gt.set_title("GT (00→10 and 01→10)", fontsize=9)
     ax_gt.axis("off")
 
-    ax_pred = fig.add_subplot(gs[1, 3])
+    ax_pred = fig.add_subplot(gs[1, 2])
     h_min, h_max = heatmap.min(), heatmap.max()
     if h_max - h_min < 1e-8:
         h_min, h_max = 0, 1
@@ -73,7 +71,7 @@ def visualize_eval(channels, gt_mask, heatmap, output_path):
     ax_pred.set_title("Predicted heatmap", fontsize=9)
     ax_pred.axis("off")
 
-    ax_overlay = fig.add_subplot(gs[:, 4])
+    ax_overlay = fig.add_subplot(gs[:, 3])
     rgb = np.zeros((*heatmap.shape, 3), dtype=np.float32)
     rgb[..., 0] = heatmap  # red = prediction
     rgb[..., 1] = gt_mask  # green = GT (overlap appears yellow)
@@ -88,7 +86,7 @@ def visualize_eval(channels, gt_mask, heatmap, output_path):
 
 
 def sliding_window_inference(channels_full, model, patch_size, device):
-    """Run sliding-window inference on a full 6-channel image (CHW dict).
+    """Run sliding-window inference on a full 4-channel image (CHW dict).
 
     channels_full: dict mapping CHANNEL_ORDER name -> (H, W) float32 (0..255).
     Returns: heatmap (H, W) in [0, 1].
@@ -105,11 +103,11 @@ def sliding_window_inference(channels_full, model, patch_size, device):
 
     for y_idx, y in enumerate(y_positions):
         for x_idx, x in enumerate(x_positions):
-            six = np.stack([
+            stacked = np.stack([
                 channels_full[k][y:y + patch_h, x:x + patch_w]
                 for k in CHANNEL_ORDER
             ], axis=0)
-            t = torch.from_numpy(six).float() / 255.0
+            t = torch.from_numpy(stacked).float() / 255.0
             t = t.unsqueeze(0).to(device)
             with torch.no_grad():
                 logits = model(t)
@@ -147,7 +145,7 @@ def sliding_window_inference(channels_full, model, patch_size, device):
 
 
 def synthesize_full_image_defects(dataset, channels_full, rng_seed):
-    """Apply 14-case defects across the entire (not patched) image."""
+    """Apply 9-case defects across the entire (not patched) image."""
     np.random.seed(rng_seed)
     h, w = channels_full["prev_T"].shape
     # Run dataloader's defect generator on the full-size image as if it were
@@ -183,7 +181,7 @@ def main():
 
     checkpoint = torch.load(args.model_path, map_location=device)
     patch_size = (checkpoint["img_height"], checkpoint["img_width"])
-    model = SegmentationNetwork(in_channels=6, out_channels=2)
+    model = SegmentationNetwork(in_channels=4, out_channels=2)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
@@ -218,12 +216,10 @@ def main():
         prev_img = _load_image(prev_path, args.img_format)
         next_img = _load_image(next_path, args.img_format)
         channels_full = {
-            "prev_T":  prev_img[:, :, 0].copy(),
-            "prev_R1": prev_img[:, :, 1].copy(),
-            "prev_R2": prev_img[:, :, 2].copy(),
-            "next_T":  next_img[:, :, 0].copy(),
-            "next_R1": next_img[:, :, 1].copy(),
-            "next_R2": next_img[:, :, 2].copy(),
+            "prev_T": prev_img[:, :, 0].copy(),
+            "prev_R": prev_img[:, :, 1].copy(),
+            "next_T": next_img[:, :, 0].copy(),
+            "next_R": next_img[:, :, 1].copy(),
         }
         channels_with_defects, gt_mask = synthesize_full_image_defects(
             dataset, channels_full, rng_seed=args.seed + i)
