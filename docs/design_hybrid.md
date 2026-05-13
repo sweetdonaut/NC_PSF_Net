@@ -96,6 +96,111 @@
 
 模型要學會的不是「找後站獨有」，而是「**判斷後站站內 T-only 是否在前站 T 通道也存在**」。R 通道（前後站皆然）提供 die-to-die 比對的視覺特徵，但不直接決定標不標。
 
+### 4.4 data/ 目錄與檔案格式
+
+```
+data/
+├── train/
+│   ├── prev/   ← 2 通道 tiff（每張 shape: (2, H, W) CHW float32）
+│   └── next/   ← 2 通道 tiff（同上）
+├── val/
+│   ├── prev/
+│   └── next/
+├── test/
+│   ├── prev/
+│   └── next/
+└── manifest.json   ← 紀錄合成 / 配對參數以供重現
+```
+
+**檔案格式細節**：
+
+- 每張影像 2 通道灰階，存成 CHW float32 tiff
+- 通道 0 = target die，通道 1 = reference die
+- `prev/<name>.tiff` ↔ `next/<name>.tiff` 同名配對（同一片晶圓同一位置）
+
+**重要：`data/` 裡完全沒有 GT mask 檔**。GT 的來源見 §4.6。
+
+### 4.5 影像內容定義
+
+「乾淨」精確定義 = **沒有後站新增 defect**；前站延續類 defect **可以存在**（這是真實生產的自然狀態）。
+
+| Phase | prev 影像內容 | next 影像內容 |
+|---|---|---|
+| **Phase 1**（目前實作）| BRN grayscale + 微弱 die noise，**完全沒有任何 defect** | 同一張 grayscale + process shift + die noise，**完全沒有任何 defect** |
+| **Phase 2**（未來）| **真實前站影像**，含真實前站既有 defects | **真實「乾淨」後站影像**，**含前站延續到後站的真實 defects** |
+
+Phase 2 的「乾淨」判斷由機台篩選，定義見 §9。
+
+### 4.6 GT 動態合成機制
+
+GT 不存於 `data/`，而是**每次 `__getitem__` 被呼叫時動態合成**。
+
+`dataloader.py::generate_paired_defects()` 流程：
+
+1. 載入該 patch 的前後站 4 通道
+2. 50% 機率不放 defect → 回傳 GT 全 0
+3. 否則：在前後站通道上 inpaint 一組合成 PSF defects（按 9 種 case + 強制四錨點，見 §6）
+4. 把「屬於正樣本 case（`00→10`、`01→10`）」的 inpaint 位置標進 GT mask
+5. 回傳 inpaint 後的 4 通道 + 對應的 GT mask
+
+→ 同一張底圖在不同 epoch 看到的 GT **不同**（因為 inpaint 隨機）。
+→ Val/Test 用固定 random seed 來重現一致的合成 GT，作為跨 epoch 比較訊號（`trainer.py::evaluate_synthetic`）。
+
+### 4.7 為什麼這樣設計
+
+#### 4.7.1 為什麼底圖只放「乾淨」影像（不含後站新 anomaly）？
+
+如果底圖裡有「位置未知」的真實後站 anomaly：
+- 該位置真實是 anomaly（GT 應為 1）
+- 但 dataloader 不會 inpaint 那裡，所以 GT mask 標 0
+- model 看到「視覺上是 anomaly + 訓練標籤 = 0」→ 學到「這種 defect 不該標」
+- → 訓練毒藥，recall 受傷
+
+「乾淨」假設避開這個問題。**前站延續類**（`10→10`、`01→01`、`11→11`）允許存在於底圖，因為它們本來就 GT=0，跟「未 inpaint 區域 GT=0」一致，不會誤導 model。
+
+#### 4.7.2 為什麼沒有 GT mask 檔，而是動態合成？
+
+- **沒有真實標註可用**：人工標註 pixel-level wafer defect 成本極高，本專案目前不靠人工標註
+- **無限資料增強**：每次 `__getitem__` 用不同的 defect 位置 / 強度 / 形狀 / case 分配 → 等效樣本量遠大於 300 張底圖
+
+預先存固定 GT 會把這兩個優勢都丟掉。
+
+#### 4.7.3 為什麼 train/val/test 都用同樣的動態合成？
+
+- **一致性**：所有 set 用同樣的判斷規則，沒有 train-eval 偏差
+- **可比較性**：跨 epoch 監控 val AUROC 是有意義的訓練收斂訊號（seed 鎖定使每個 epoch 的 val 合成幾乎相同）
+- **覆蓋率可控**：強制四錨點機制保證每個 patch 都覆蓋四個關鍵 case，靜態 GT 做不到
+
+#### 4.7.4 為什麼前後站像素對齊（MVP 假設）
+
+判斷規則需要逐 pixel 比較 `prev_T` 與 `next_T`。若像素不對齊，model 必須同時學「跨站配準」+「找新 defect」兩件事。MVP 直接假設對齊；Phase 2 的真實資料若無法對齊，需要前置配準（見 §12.1 第 1 點）。
+
+### 4.8 這個設計能驗證什麼、不能驗證什麼
+
+| ✓ 能驗證 | ✗ 不能驗證 |
+|---|---|
+| Pipeline 邏輯正確（dataloader、model、loss 沒 bug） | Model 對**真實**後站新 defect 的偵測能力 |
+| Model 能擬合合成 defect distribution | 合成 PSF 與真實 defect 的 domain gap 影響 |
+| 9 種 case 都被訓練到（透過 case coverage 統計） | 真實 noise / 紋理變化下的 robustness（Phase 1） |
+| Phase 2 多驗證：model 能在真實 noise 下處理合成 defect、能正確忽略真實前站 defect | Phase 2 仍不衡量真實 anomaly 偵測效能 |
+
+### 4.9 本質：「合成監督學習」
+
+很多人看到「沒有 GT 檔」會以為這是 unsupervised。**不是**。
+
+這是 **supervised learning，只是監督訊號由 dataloader 動態生成而非預先存檔**：
+
+- `focal_loss(pred, dynamic_GT)` 仍是 supervised
+- GT 來自我們已知位置的 inpaint，100% 可信
+- 比真實 anomaly 標註便宜（不用人標）
+- 比 unsupervised 有明確 signal（明確知道哪些 pixel 該標 1）
+
+**代價**：合成 distribution ≠ 真實 distribution，所以「合成 AUROC = 1.0」**不能保證真實效能**。Phase 2 用真實底圖能稍微縮小 gap（model 至少看到真實 noise），但 GT 仍是合成 inpaint，無法完全消除這個落差。
+
+一句話總結整套設計：
+
+> **用「乾淨底圖 + 動態合成 inpaint」當訓練資料，犧牲「真實 anomaly 效能驗證」這個無法負擔的成本，換取「無限合成訓練樣本 + 完美可控 GT + 100% case coverage」。**
+
 ---
 
 ## 5. Case 分析：Hybrid 下的雙來源
