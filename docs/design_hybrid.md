@@ -334,22 +334,38 @@ Inpaint 位置完全隨機，接受偶爾撞到底圖既有真實 defect 的 GT 
 
 ---
 
-## 13. 實作 checklist（從策略 B code 演化）
+## 13. 實作 checklist（從目前 code 演化到 hybrid）
 
-要從現有 strategy B 程式碼演化到 hybrid，預期改動：
+> **重要釐清**：目前 code 仍對應 `archive/design_v1_3ch.md` 的 **3 通道版本**（commit `b892a97`）。策略 B 的 2 通道設計文件雖然存在於 archive，但**從未實作為 code**。因此從現有 code 到 hybrid，需要同時完成「3 通道 → 2 通道重構」與「合成底圖 → 真實底圖」兩件事。
 
-| 元件 | 改動 |
-|---|---|
-| `scripts/build_paired_dataset.py` | **重寫**：從 BRN 合成 → 接收真實前後站影像對 + 排版到 train/val/test |
-| `src_core/dataloader.py` | 不變（只是讀進來的底圖換成真實影像） |
-| `src_core/model.py` | 完全不變 |
-| `src_core/loss.py` | 完全不變 |
-| `src_core/trainer.py` | 完全不變 |
-| `src_core/inference.py` | 完全不變 |
-| `src_core/eval_synthetic.py` | 不變（仍可用，但語意稍變 —— 真實底圖 + 合成 inpaint） |
-| `docs/figures/` | 訓練後加入 `hybrid_*.png` 視覺化（保留現有 `strategyB_*.png` 作為對比 baseline） |
+### 13.1 從現有 code (commit `b892a97`) 到 hybrid 的完整改動
 
-→ **真正需要改的只有資料準備腳本**。整個 NC 機器學習邏輯與訓練 pipeline 完全不變。
+| 元件 | 改動內容 | 工作量 |
+|---|---|---|
+| `src_core/model.py` | `SegmentationNetwork(in_channels=6, ...)` → `in_channels=4` | 一行 |
+| `src_core/dataloader.py` | `CASES` dict：14 條目 (A1-A7, B1-B7) → 9 條目（pattern 命名）<br>`CHANNEL_ORDER`：6 名 → 4 名<br>`generate_paired_defects`：3 通道 patch → 2 通道 patch<br>`_assign_cases`：強制 A1+B1 → 強制四錨點（`00→10`/`01→10`/`10→10`/`11→10`）<br>讀入的底圖換成真實前後站影像（路徑沿用 `prev_path`/`next_path`） | **大幅改動** |
+| `src_core/trainer.py` | 輸入鍵名不變 (`paired_input`)、`num_defects_range` 下限調整為 4 | 小調整 |
+| `src_core/inference.py` | sliding-window stack：6 通道 → 4 通道；視覺化 panel：7-panel → 5-panel | 中等 |
+| `src_core/eval_synthetic.py` | 同 inference.py，stack 與視覺化通道數調整 | 中等 |
+| `scripts/build_paired_dataset.py` | **完全重寫**：合成 → 接收真實前後站影像對 + 機台篩選結果排版到 train/val/test | 重寫 |
+| `src_core/loss.py` | **完全不變** | – |
+| `src_core/defects/*.yaml` | **完全不變** | – |
+
+### 13.2 哪些核心邏輯確實不變
+
+雖然 channel 數涉及多個檔案，但以下核心算法邏輯**完全沿用**：
+
+- 模型架構：UNet + SPPF + SEBlock 的 encoder-decoder 骨幹
+- Loss：Focal Loss + cosine gamma schedule
+- 訓練流程：sliding-window 訓練、AUROC 評估、checkpoint 儲存
+- Inference 演算法：sliding-window + center-crop stitching
+- PSF defect 生成：`generate_psf.py` 完全不變，pool 機制不變
+- `_create_one_defect`、`apply_local_defect_to_background` 等局部工具完全不變
+
+### 13.3 視覺化檔案
+
+- 保留現有 `docs/figures/strategyB_*.png`（其實是 3 通道版本的真實實驗結果，命名因為已 commit 不另外改）
+- Hybrid 訓練後加入 `hybrid_*.png` 視覺化
 
 ---
 

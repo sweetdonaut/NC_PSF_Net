@@ -1,10 +1,16 @@
 # 策略 B 設計筆記（純合成 baseline）— 已歸檔
 
-> **本文件 status**：策略 B 是 NC_PSF_Net 第一個跑通的 baseline，**對應 commit `d87f7aa` 以前的程式碼**（底圖完全合成、所有 defect 靠 inpaint）。在驗證 pipeline 正確、Val/Test pixel AUROC 達 1.0000 後，發現策略 B 的合成底圖缺乏「真實前站 defect 外觀」與「真實跨站 noise 結構」這兩個策略 B 給不了的訓練 signal。
+> **本文件 status**：2 通道版本的純合成 baseline 設計，**從未實作為 code**。當前 code 仍對應 `archive/design_v1_3ch.md` 的 3 通道版本（commit `b892a97`）。
 >
-> **已被 `docs/design_hybrid.md` 取代**。Hybrid 設計沿用本文件的所有 case 分析、強制錨點機制、模型架構，只把底圖從「BRN 合成」換成「真實前後站影像對」。除底圖來源外，dataloader 邏輯、訓練流程完全不變。
+> 本文件在從「3 通道誤判」轉為「2 通道確認」後寫成，本來預期作為 hybrid 之前的中間實作 baseline，但因為使用者進一步在生產環境確認可取得真實前後站影像，直接演化為 hybrid 設計，本文件因此跳過實作階段。
 >
-> 本文件保留作為策略 B 程式碼版本的設計依據，以及 hybrid 文件大量沿用的論述基礎。
+> **本文件保留的價值**：
+> - 完整的 16 種 case 分析框架（hybrid 大量沿用）
+> - 9 種訓練 case + 四錨點強制機制（hybrid 完全沿用）
+> - case 命名規則（`前pattern→後pattern`）
+> - 「必須 inpaint = inference 會遇到 AND 底圖不會自然產生」的判斷邏輯
+>
+> **已被 `docs/design_hybrid.md` 取代**。Hybrid 沿用本文件的所有 case 分析、強制錨點、模型架構，只把底圖從「BRN 合成」換成「真實前後站影像對」。
 >
 > **命名規則**：本文件用 `前pattern→後pattern` 當 case 代號（例如 `00→10`），不使用 ABCD 字母分類。pattern 為 2 位元 `(T, R)`，例如 `10` 表示 T die 有 defect、R die 沒有。
 

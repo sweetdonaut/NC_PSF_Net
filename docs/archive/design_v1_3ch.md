@@ -1,4 +1,15 @@
-# NC_PSF_Net 設計文件
+# NC_PSF_Net 設計文件 v1（3 通道版本）— 已歸檔
+
+> **本文件 status**：第一版設計，**對應 commit `b892a97` 跑通的程式碼**（3 通道 per station、`in_channels=6`、14 種 case A1-A7/B1-B7、強制 A1+B1 兩錨點）。
+>
+> 當時誤以為生產環境是「target + 2 references」共 3 通道。後續到生產環境確認**實際只有 target + 1 reference**（2 通道），本設計的核心前提失效，14 種 case 設計需要重新推導。
+>
+> **本設計已被以下文件取代**：
+> - `archive/design_strategyA.md`：2 通道版本的純真實底圖理論記錄（不可行）
+> - `archive/design_strategyB.md`：2 通道版本的純合成 baseline 設計（未實作）
+> - `design_hybrid.md`：當前實作目標（2 通道，真實底圖 + 沿用策略 B inpaint 機制）
+>
+> 本文件保留作為**當前 code 的設計依據**（在 hybrid 實作完成前 code 仍對應這份），以及通道規格演化的歷史紀錄。
 
 ## 1. 背景與動機
 
