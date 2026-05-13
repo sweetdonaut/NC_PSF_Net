@@ -236,6 +236,8 @@ Hybrid 跟策略 B 的差別 = 底圖能提供多少 case：
 
 ### 5.3 16 種 case 完整評估表
 
+> **注意**：下表「inference 遇到？」一欄是基於對製程的**先驗信念**，不是測量結果。Phase 2 早期應該量測真實 case 分布來驗證；若發現某些「罕見」case 其實不那麼罕見，需要回頭加入訓練 case set（見 §12.2.2）。
+
 | Pattern | 製程情況 | inference 遇到？ | 底圖自然產生？ | GT | Hybrid 處理 |
 |---|---|---|---|---|---|
 | `00→00` | 正常背景區 | 是（大部分像素） | ✅ 是 | 0 | 不必 inpaint |
@@ -285,6 +287,8 @@ Hybrid 跟策略 B 的差別 = 底圖能提供多少 case：
 
 **每個 patch 至少各放 1 個 `00→10`、`01→10`、`10→10`、`11→10`**（與策略 B 完全相同）。
 
+> **前提**：此承諾依賴 `num_defects_range` 下限 ≥ 4。dataloader 對下限 < 4 會 print warning 但仍會跑（只放部分 anchor，承諾退化）。`train.sh` / `eval_synthetic.py` 預設 `[4, 10]` 滿足這個前提。
+
 四個 case 在「後站站內看」全部都是 T-only，差別只在前站 pattern：
 
 | Pattern | prev (T R) | GT | 意義 |
@@ -323,7 +327,7 @@ SegmentationNetwork(in_channels=4, out_channels=2)
 ### 7.2 為什麼不升級架構
 
 - 真實底圖 + 完整 inpaint 機制下，4 通道 concat 讓 encoder 自己學跨站對比已足夠
-- Hybrid 的訓練 distribution 比策略 B 更貼近 inference，先驗證真實效能再考慮升級
+- Phase 2 切換到真實底圖後，hybrid 訓練 distribution 才比策略 B 更貼近 inference（Phase 1 distribution 跟策略 B 等價）。先驗證真實效能再考慮升級。
 
 ---
 
@@ -379,9 +383,16 @@ Inpaint 位置完全隨機，接受偶爾撞到底圖既有真實 defect 的 GT 
 - → **該位置 GT 錯標**
 
 **撞到機率估算**：
+
+需要用「區域重疊」模型估，不是「中心 pixel 重合」。inpaint 是 ~32² 區域、底圖 defect 也是 ~32² 區域，撞到的判定是兩個 32² 區域有 overlap。
+
 - 真實前站 defect 佔底圖 ~0.01-0.1% pixel
-- 每 patch 約 4-10 個 inpaint，累積撞到機率 ~0.04-1%
-- 訓練集錯標比例 ~0.04-1%，對訓練影響可忽略
+- 單個 32² inpaint 區域內期望覆蓋 defect pixel 數 ≈ 32² × density = **0.1 ~ 1 個**
+- 撞到機率 per inpaint ≈ 1 - exp(−0.1 ~ −1) ≈ **10% ~ 64%**
+- 每 patch 4-10 個 inpaint → 至少撞到 1 個的累積機率 ≈ **33% ~ ~100%**
+- 但只有「inpaint 是 GT=1 正樣本 case」（`00→10` / `01→10`，佔 ~22%）撞到才會錯標 → 含錯標正樣本的 patch 比例 ~5% ~ 22%
+
+Phase 1 不會踩（底圖沒 defect）；**Phase 2 開始這個比例非小**，§10.2 的避撞方案優先級需要拉高。原本估算的 0.04-1% 是把 inpaint 跟 defect 都當成單 pixel 算，低估了一兩個量級。
 
 ### 10.2 附註：未來瓶頸時的避撞方案
 
@@ -440,49 +451,58 @@ Inpaint 位置完全隨機，接受偶爾撞到底圖既有真實 defect 的 GT 
 
 ---
 
-## 13. 實作 checklist（從目前 code 演化到 hybrid）
+## 13. 實作 status
 
-> **重要釐清**：目前 code 仍對應 `archive/design_v1_3ch.md` 的 **3 通道版本**（commit `b892a97`）。策略 B 的 2 通道設計文件雖然存在於 archive，但**從未實作為 code**。因此從現有 code 到 hybrid，需要同時完成「3 通道 → 2 通道重構」與「合成底圖 → 真實底圖」兩件事。
+> **狀態**：Phase 1 已完成於 commit `bace3b2`（v1 3 通道 `b892a97` → 當前 2 通道 hybrid pipeline）。Phase 2（底圖切換為真實前後站影像）待真實資料 + 機台篩選結果到位。本節記錄哪些已做、哪些待做。
 
-### 13.1 從現有 code (commit `b892a97`) 到 hybrid 的完整改動
+### 13.1 Phase 1 已完成的改動（commit `b892a97` → `bace3b2`）
 
-| 元件 | 改動內容 | 工作量 |
-|---|---|---|
-| `src_core/model.py` | `SegmentationNetwork(in_channels=6, ...)` → `in_channels=4` | 一行 |
-| `src_core/dataloader.py` | `CASES` dict：14 條目 (A1-A7, B1-B7) → 9 條目（pattern 命名）<br>`CHANNEL_ORDER`：6 名 → 4 名<br>`generate_paired_defects`：3 通道 patch → 2 通道 patch<br>`_assign_cases`：強制 A1+B1 → 強制四錨點（`00→10`/`01→10`/`10→10`/`11→10`）<br>讀入的底圖換成真實前後站影像（路徑沿用 `prev_path`/`next_path`） | **大幅改動** |
-| `src_core/trainer.py` | 輸入鍵名不變 (`paired_input`)、`num_defects_range` 下限調整為 4 | 小調整 |
-| `src_core/inference.py` | sliding-window stack：6 通道 → 4 通道；視覺化 panel：7-panel → 5-panel | 中等 |
-| `src_core/eval_synthetic.py` | 同 inference.py，stack 與視覺化通道數調整 | 中等 |
-| `scripts/build_paired_dataset.py` | **完全重寫**：合成 → 接收真實前後站影像對 + 機台篩選結果排版到 train/val/test | 重寫 |
-| `src_core/loss.py` | **完全不變** | – |
-| `src_core/defects/*.yaml` | **完全不變** | – |
+| 元件 | 改動內容 |
+|---|---|
+| `src_core/model.py` | `SegmentationNetwork(in_channels=6, ...)` → `in_channels=4` |
+| `src_core/dataloader.py` | `CASES` dict：14 條目 (A1-A7, B1-B7) → 9 條目（pattern 命名）；`CHANNEL_ORDER`：6 名 → 4 名；`generate_paired_defects`：3 通道 patch → 2 通道 patch；`_assign_cases`：強制 A1+B1 → 強制四錨點（`00→10` / `01→10` / `10→10` / `11→10`）|
+| `src_core/trainer.py` | `num_defects_range` 下限調整為 4；val_loader 強制 `num_workers=0` 確保 seed 真正鎖定 |
+| `src_core/inference.py` | sliding-window stack：6 通道 → 4 通道；視覺化 panel：7-panel → 5-panel |
+| `src_core/eval_synthetic.py` | 同 inference.py，stack 與視覺化通道數調整；`num_defects_range` 預設對齊 train.sh |
+| `scripts/build_paired_dataset.py` | 改生成 `(2, H, W)` tiff（仍從 BRN grayscale 合成乾淨底圖，**未切換為真實前後站**） |
+| `src_core/loss.py`、`src_core/defects/*.yaml` | 不變 |
 
-### 13.2 哪些核心邏輯確實不變
+### 13.2 Phase 2 待做
 
-雖然 channel 數涉及多個檔案，但以下核心算法邏輯**完全沿用**：
+| 元件 | 改動內容 |
+|---|---|
+| `scripts/build_paired_dataset.py` | **完全重寫**：接收真實前後站影像對 + 機台篩選結果，排版到 `data/{train,val,test}/{prev,next}/`。或者使用者直接手動排版到對應目錄，此 script 可整個丟棄。 |
+| `src_core/defects/*.yaml` 的 `intensity_abs` | 重新校準（合成底圖跟真實影像的動態範圍可能不同，見 §11） |
+| §10 避撞策略 | 視撞到機率實機觀察結果，可能升級到 §10.2 的方案 2/3/4（撞到機率比原估算高 1-2 量級，見 §10.1） |
+
+### 13.3 哪些核心邏輯確實不變
+
+從 Phase 1 進入 Phase 2，以下核心算法**完全沿用**：
 
 - 模型架構：UNet + SPPF + SEBlock 的 encoder-decoder 骨幹
 - Loss：Focal Loss + cosine gamma schedule
 - 訓練流程：sliding-window 訓練、AUROC 評估、checkpoint 儲存
 - Inference 演算法：sliding-window + center-crop stitching
 - PSF defect 生成：`generate_psf.py` 完全不變，pool 機制不變
-- `_create_one_defect`、`apply_local_defect_to_background` 等局部工具完全不變
+- dataloader 內 9 case + 四錨點 + 動態合成機制不變
 
-### 13.3 視覺化檔案
+### 13.4 視覺化檔案
 
-- 保留現有 `docs/figures/strategyB_*.png`（其實是 3 通道版本的真實實驗結果，命名因為已 commit 不另外改）
-- Hybrid 訓練後加入 `hybrid_*.png` 視覺化
+- `docs/figures/strategyB_*.png` 是 3 通道版本的真實實驗結果，命名因為已 commit 不另外改
+- Phase 2 訓練後加入 `hybrid_*.png` 視覺化
 
 ---
 
 ## 14. 與策略 A、策略 B 的關係（一頁總結）
 
-| 維度 | 純策略 A | 純策略 B | **Hybrid（本文件）** |
-|---|---|---|---|
-| 底圖 | 真實前後站 | 合成乾淨 | **真實前後站** |
-| 持續類訓練 | 只靠底圖（密度不可控）| 全 inpaint | **底圖 + inpaint 雙重來源** |
-| 強制四錨點 | 無法保證 | 完整保證 | **完整保證** |
-| GT 純淨度 | 受篩選品質影響 | 100% | **受篩選品質影響** |
-| 實作可行性 | 不可行 | 已驗證 | **規劃完成** |
-| 真實 inference 對齊 | 高 | 低 | **高** |
-| 文件 | `archive/design_strategyA.md` | `archive/design_strategyB.md` | **本文件** |
+| 維度 | 純策略 A | 純策略 B | **Hybrid Phase 1（已實作）** | **Hybrid Phase 2（規劃）** |
+|---|---|---|---|---|
+| 底圖 | 真實前後站 | 合成乾淨 | 合成乾淨（同策略 B）| **真實前後站** |
+| 持續類訓練 | 只靠底圖（密度不可控）| 全 inpaint | 全 inpaint（同策略 B）| **底圖 + inpaint 雙重來源** |
+| 強制四錨點 | 無法保證 | 完整保證 | 完整保證 | 完整保證 |
+| GT 純淨度 | 受篩選品質影響 | 100% | 100% | 受篩選品質影響 |
+| 實作可行性 | 不可行 | 已驗證 | **已實作完成**（commit `bace3b2`）| **規劃完成** |
+| 真實 inference 對齊 | 高 | 低 | 低（同策略 B）| **高** |
+| 文件 | `archive/design_strategyA.md` | `archive/design_strategyB.md` | 本文件 | 本文件 |
+
+> **Phase 1 的本質**：在 distribution 對齊上跟策略 B 等價（同樣合成乾淨底圖），不是「真正的 hybrid」。Phase 1 的價值是驗證 hybrid 必備元件（2 通道 pipeline + 9 case + 四錨點機制 + dataloader 動態合成）能跑通；底圖切換到真實前後站影像後（Phase 2），才取得 hybrid 設計的核心優勢（真實 noise 結構 + 真實前站 defect 外觀）。
