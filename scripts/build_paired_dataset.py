@@ -1,13 +1,25 @@
 """
-Build a paired prev/next dataset from Background_Removal_Net grayscale tiffs.
+Phase 1 synthetic baseline-image builder for NC_PSF_Net (Hybrid pipeline).
 
-Strategy (matches docs/design.md strategy B — fully synthetic):
-  - For each source grayscale image `gray`:
-    - prev: stack 3 copies + small per-die noise (sigma_die)
-    - next: apply systematic process shift (brightness * k_b + offset_b +
-      Gaussian sigma_proc), then stack 3 copies + per-die noise
+Purpose:
+  Build paired prev/next "clean baseline" images by synthesizing both stations
+  from a single BRN grayscale source. PSF defects are NOT inpainted here — the
+  dataloader does that dynamically per __getitem__ (see docs/design_hybrid.md
+  §4.6).
 
-Output: tiffs saved CHW (3, H, W) float32 to mirror BRN's convention.
+  Required in Phase 1 only. In Phase 2, drop real wafer prev/next pairs (each
+  CHW (2, H, W) float32 tiff, prev/<name>.tiff and next/<name>.tiff sharing
+  the same basename, with the next side already filtered by the in-line tool
+  to be "clean") directly into data/{train,val,test}/{prev,next}/. The
+  dataloader consumes those without going through this script.
+
+Per source image:
+  prev: stack 2 dies (target + 1 reference) = gray + per-die noise
+  next: apply process shift (brightness * k_b + offset_b + Gaussian sigma_proc),
+        then stack 2 dies with per-die noise
+
+Output: CHW (2, H, W) float32 tiffs. prev/<name>.tiff and next/<name>.tiff
+share basename to define each pair.
 """
 
 import argparse

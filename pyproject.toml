@@ -1,7 +1,7 @@
 [project]
-name = "background-removal-net"
+name = "nc-psf-net"
 version = "0.1.0"
-description = "Add your description here"
+description = "Cross-station PSF defect segmentation: detect anomalies new to the next station from paired prev/next die-to-die images."
 requires-python = ">=3.11"
 dependencies = [
     "boto3>=1.40.0",

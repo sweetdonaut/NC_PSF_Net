@@ -241,9 +241,13 @@ def train_on_device(args):
             psf_pool_size=max(args.psf_pool_size // 4, 64),
             psf_pool_workers=args.psf_pool_workers,
         )
+        # Force single-process for val: evaluate_synthetic relies on
+        # np.random.seed in the main process, which DataLoader workers don't
+        # inherit. With num_workers=0 the seed actually pins the inpaint
+        # configuration across epochs.
         val_loader = DataLoader(
             val_dataset, batch_size=args.bs, shuffle=False,
-            num_workers=args.num_workers, prefetch_factor=args.prefetch_factor)
+            num_workers=0)
         print(f"Val dataset size: {len(val_dataset)} samples")
 
     save_training_artifacts(args.checkpoint_path, train_dataset, psf_config_paths)

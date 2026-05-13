@@ -18,10 +18,10 @@
    - 只在複雜邏輯或不易理解的部分加註解
    - 優先讓程式碼自我說明（self-documenting code）
 
-## 專案目標與討論記錄
-@project_discussion.md
+## 專案設計文件
+快速入門（3 分鐘版，內含完整版連結）：
+@docs/design_hybrid_overview.md
 
-## 開發記錄
-@development_record.md
+開發歷史請查 `git log`；策略演化的歷史筆記在 `docs/archive/`（v1 三通道、純策略 A、純策略 B）。
 
 ---
