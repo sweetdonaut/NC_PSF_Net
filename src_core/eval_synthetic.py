@@ -162,7 +162,8 @@ def main():
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--gpu_id", type=int, default=0)
     parser.add_argument("--img_format", type=str, choices=["png_jpg", "tiff"], default="tiff")
-    parser.add_argument("--num_defects_range", type=int, nargs=2, default=[5, 10])
+    parser.add_argument("--num_defects_range", type=int, nargs=2, default=[4, 10],
+                        help="[min, max] defects per image. Default aligned with train.sh.")
     parser.add_argument("--defect_mode", type=str, choices=["gaussian", "psf"], default="psf")
     parser.add_argument("--psf_type", type=str, nargs="+", default=["type1", "type2", "type3"])
     parser.add_argument("--psf_pool_size", type=int, default=200)

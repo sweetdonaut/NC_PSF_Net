@@ -1,4 +1,4 @@
-# Background Removal Net 專案說明
+# NC_PSF_Net 專案說明
 
 ## 語言設定
 本專案使用**繁體中文**進行對話和溝通。
