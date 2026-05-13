@@ -4,7 +4,10 @@
 
 ## 入口文件
 
-設計理念與訓練流程的完整說明請看 [`docs/design_hybrid_overview.md`](docs/design_hybrid_overview.md)（3 分鐘入門，內含完整版 [`design_hybrid.md`](docs/design_hybrid.md) 連結）。
+- **完整設計（推薦）**：[`docs/design_hybrid_refresh.md`](docs/design_hybrid_refresh.md)
+- 3 分鐘快速入門：[`docs/design_hybrid_overview.md`](docs/design_hybrid_overview.md)
+
+> 舊版 [`docs/design_hybrid.md`](docs/design_hybrid.md) 暫時保留供對照；overview 內的章節連結仍指向舊版，refresh promote 後會一次性對齊。
 
 ## 怎麼跑
 
