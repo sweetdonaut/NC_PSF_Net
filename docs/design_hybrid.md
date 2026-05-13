@@ -1,9 +1,10 @@
-# NC_PSF_Net 設計文件 — Hybrid（當前實作目標）
+# NC_PSF_Net 設計文件 — Hybrid（當前實作）
 
-> **本文件 status**：當前採用設計。**狀態：規劃完成，code 尚未實作**。  
-> 目前 code 仍對應 `archive/design_strategyB.md`（純合成 baseline）。Hybrid 實作後本文件成為 code 的依據。
+> **想快速理解專案？** 先看 [`design_hybrid_overview.md`](design_hybrid_overview.md)（3 分鐘版）。本文件是完整設計推導。
 >
-> **核心定位**：Hybrid = 真實前後站影像（策略 A 的底圖）+ 沿用策略 B 的全部 inpaint 機制。**不是「折衷」，是「真正能落地的策略 A」**——純策略 A 因強制四錨點機制湊不齊而工程上失敗（詳見 `archive/design_strategyA.md`）。
+> **本文件 status**：當前採用設計。**Phase 1 已實作完成**（程式碼從 3 通道重構為 2 通道、9 case + 四錨點機制就位），對應 commit `bace3b2`。**Phase 2 待真實資料到位**（底圖從合成切換為真實前後站影像，只需重寫 `scripts/build_paired_dataset.py`）。
+>
+> **核心定位**：Hybrid = 真實前後站影像（策略 A 的底圖）+ 沿用策略 B 的全部 inpaint 機制。**不是「折衷」，是「真正能落地的策略 A」**——純策略 A 因強制四錨點機制湊不齊而工程上失敗（詳見 [`archive/design_strategyA.md`](archive/design_strategyA.md)）。
 >
 > **相對於策略 B 唯一改變的元件**：底圖來源。其餘（9 種 case 設計、強制四錨點機制、模型架構、loss、訓練流程）完全沿用。
 >
