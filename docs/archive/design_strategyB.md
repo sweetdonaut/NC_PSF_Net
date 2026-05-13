@@ -1,12 +1,12 @@
-# NC_PSF_Net 設計文件 v2（2 通道版，策略 B）
+# 策略 B 設計筆記（純合成 baseline）— 已歸檔
 
-> **本文件 status**：第二版設計。生產環境確認每站影像只有 target + 1 reference（共 2 通道），原 v1 假設的 3 通道規格已作廢。
+> **本文件 status**：策略 B 是 NC_PSF_Net 第一個跑通的 baseline，**對應 commit `d87f7aa` 以前的程式碼**（底圖完全合成、所有 defect 靠 inpaint）。在驗證 pipeline 正確、Val/Test pixel AUROC 達 1.0000 後，發現策略 B 的合成底圖缺乏「真實前站 defect 外觀」與「真實跨站 noise 結構」這兩個策略 B 給不了的訓練 signal。
 >
-> **訓練策略**：策略 B（fully synthetic baseline）—— 底圖完全是合成乾淨影像，所有 defect 訊號透過 inpaint 提供。策略 A 的對應分析另開文件。
+> **已被 `docs/design_hybrid.md` 取代**。Hybrid 設計沿用本文件的所有 case 分析、強制錨點機制、模型架構，只把底圖從「BRN 合成」換成「真實前後站影像對」。除底圖來源外，dataloader 邏輯、訓練流程完全不變。
 >
-> **與 `design.md`（v1）的關係**：v1 為 3 通道版本歷史紀錄保留；本文件取代 v1 作為當前實作依據。
+> 本文件保留作為策略 B 程式碼版本的設計依據，以及 hybrid 文件大量沿用的論述基礎。
 >
-> **命名規則**：本文件用 `前pattern→後pattern` 當 case 代號（例如 `00→10`），不再使用 ABCD 字母分類。pattern 為 2 位元 `(T, R)`，例如 `10` 表示 T die 有 defect、R die 沒有。
+> **命名規則**：本文件用 `前pattern→後pattern` 當 case 代號（例如 `00→10`），不使用 ABCD 字母分類。pattern 為 2 位元 `(T, R)`，例如 `10` 表示 T die 有 defect、R die 沒有。
 
 ---
 
